@@ -17,7 +17,7 @@ const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const OAUTH_SCOPE: &str = "openid profile email";
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
-struct AuthFile {
+pub(crate) struct AuthFile {
     auth_mode: Option<String>,
     #[serde(rename = "OPENAI_API_KEY")]
     openai_api_key: Option<String>,
@@ -26,7 +26,7 @@ struct AuthFile {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
-struct AuthTokens {
+pub(crate) struct AuthTokens {
     access_token: Option<String>,
     refresh_token: Option<String>,
     id_token: Option<String>,
@@ -95,7 +95,10 @@ impl StoredCredentials {
                 .unwrap_or_else(|| self.refresh_token.clone()),
         );
         tokens.id_token = response.id_token.clone().or_else(|| self.id_token.clone());
-        tokens.account_id = tokens.account_id.clone().or_else(|| self.account_id.clone());
+        tokens.account_id = tokens
+            .account_id
+            .clone()
+            .or_else(|| self.account_id.clone());
 
         let refreshed_at = Utc::now();
         self.file.last_refresh = Some(refreshed_at.to_rfc3339());
@@ -112,6 +115,10 @@ impl StoredCredentials {
 
     fn path(&self) -> &Path {
         &self.path
+    }
+
+    pub(crate) fn auth_file(&self) -> &AuthFile {
+        &self.file
     }
 
     pub fn account_identity(&self) -> AccountIdentity {
@@ -151,14 +158,97 @@ impl StoredCredentials {
 }
 
 pub fn load_credentials() -> AppResult<StoredCredentials> {
-    let path = resolve_auth_path()?;
-    if !path.exists() {
-        return Err(AppError::AuthFileMissing(path));
+    let path = resolve_current_auth_path()?;
+    let auth_file = read_auth_file(&path)?;
+    credentials_from_auth_file(path, auth_file)
+}
+
+pub async fn refresh_credentials(
+    client: &Client,
+    credentials: StoredCredentials,
+) -> AppResult<StoredCredentials> {
+    let updated = refresh_credentials_without_persist(client, credentials).await?;
+    persist_credentials(&updated)?;
+
+    Ok(updated)
+}
+
+pub(crate) async fn refresh_credentials_without_persist(
+    client: &Client,
+    credentials: StoredCredentials,
+) -> AppResult<StoredCredentials> {
+    let response = client
+        .post(REFRESH_URL)
+        .json(&RefreshRequest {
+            client_id: CLIENT_ID,
+            grant_type: "refresh_token",
+            refresh_token: &credentials.refresh_token,
+            scope: OAUTH_SCOPE,
+        })
+        .send()
+        .await?;
+
+    if response.status().as_u16() == 401 {
+        let body = response
+            .text()
+            .await
+            .unwrap_or_else(|_| String::from("unauthorized"));
+        return Err(AppError::AuthRefreshFailed(body));
     }
 
-    let contents = fs::read_to_string(&path)?;
-    let auth_file: AuthFile = serde_json::from_str(&contents)?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .unwrap_or_else(|_| String::from("unknown refresh failure"));
+        return Err(AppError::AuthRefreshFailed(format!("{status}: {body}")));
+    }
 
+    let refreshed: RefreshResponse = response.json().await?;
+    Ok(credentials.with_refreshed_tokens(refreshed))
+}
+
+fn persist_credentials(credentials: &StoredCredentials) -> AppResult<()> {
+    let body = serde_json::to_string_pretty(&credentials.file)?;
+    fs::write(credentials.path(), body)?;
+    Ok(())
+}
+
+pub(crate) fn resolve_current_auth_path() -> AppResult<PathBuf> {
+    if let Ok(codex_home) = env::var("CODEX_HOME") {
+        let path = PathBuf::from(codex_home).join(AUTH_FILE_NAME);
+        return Ok(path);
+    }
+
+    let home = dirs::home_dir().ok_or(AppError::HomeDirectoryMissing)?;
+    Ok(home.join(".codex").join(AUTH_FILE_NAME))
+}
+
+pub(crate) fn read_auth_file(path: &Path) -> AppResult<AuthFile> {
+    if !path.exists() {
+        return Err(AppError::AuthFileMissing(path.to_path_buf()));
+    }
+
+    let contents = fs::read_to_string(path)?;
+    let auth_file: AuthFile = serde_json::from_str(&contents)?;
+    Ok(auth_file)
+}
+
+pub(crate) fn write_auth_file(path: &Path, auth_file: &AuthFile) -> AppResult<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let body = serde_json::to_string_pretty(auth_file)?;
+    fs::write(path, body)?;
+    Ok(())
+}
+
+pub(crate) fn credentials_from_auth_file(
+    path: PathBuf,
+    auth_file: AuthFile,
+) -> AppResult<StoredCredentials> {
     if let Some(mode) = auth_file.auth_mode.clone() {
         if mode != "chatgpt" && mode != "oauth" {
             return Err(AppError::UnsupportedAuthMode(mode));
@@ -186,52 +276,6 @@ pub fn load_credentials() -> AppResult<StoredCredentials> {
         path,
         file: auth_file,
     })
-}
-
-pub async fn refresh_credentials(client: &Client, credentials: StoredCredentials) -> AppResult<StoredCredentials> {
-    let response = client
-        .post(REFRESH_URL)
-        .json(&RefreshRequest {
-            client_id: CLIENT_ID,
-            grant_type: "refresh_token",
-            refresh_token: &credentials.refresh_token,
-            scope: OAUTH_SCOPE,
-        })
-        .send()
-        .await?;
-
-    if response.status().as_u16() == 401 {
-        let body = response.text().await.unwrap_or_else(|_| String::from("unauthorized"));
-        return Err(AppError::AuthRefreshFailed(body));
-    }
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_else(|_| String::from("unknown refresh failure"));
-        return Err(AppError::AuthRefreshFailed(format!("{status}: {body}")));
-    }
-
-    let refreshed: RefreshResponse = response.json().await?;
-    let updated = credentials.with_refreshed_tokens(refreshed);
-    persist_credentials(&updated)?;
-
-    Ok(updated)
-}
-
-fn persist_credentials(credentials: &StoredCredentials) -> AppResult<()> {
-    let body = serde_json::to_string_pretty(&credentials.file)?;
-    fs::write(credentials.path(), body)?;
-    Ok(())
-}
-
-fn resolve_auth_path() -> AppResult<PathBuf> {
-    if let Ok(codex_home) = env::var("CODEX_HOME") {
-        let path = PathBuf::from(codex_home).join(AUTH_FILE_NAME);
-        return Ok(path);
-    }
-
-    let home = dirs::home_dir().ok_or(AppError::HomeDirectoryMissing)?;
-    Ok(home.join(".codex").join(AUTH_FILE_NAME))
 }
 
 fn parse_refresh_timestamp(value: Option<&str>) -> AppResult<Option<DateTime<Utc>>> {

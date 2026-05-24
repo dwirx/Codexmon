@@ -8,30 +8,28 @@ import {
 } from "react";
 
 import { waitForMinimumSpinner } from "../lib/refresh";
-import { getCodexUsageSnapshot } from "../lib/tauri";
-import type { CodexUsageSnapshot } from "../types/codex";
+import { getMultiAccountUsage } from "../lib/tauri";
+import type { MultiAccountUsageState } from "../types/codex";
 import { useDocumentVisibility } from "./useDocumentVisibility";
 
-const POLL_INTERVAL_MS = 60_000;
-const CLOCK_INTERVAL_MS = 30_000;
+const POLL_INTERVAL_MS = 120_000;
 
 type RefreshMode = "initial" | "manual" | "background";
 
-export function useCodexUsage() {
-  const [snapshot, setSnapshot] = useState<CodexUsageSnapshot | null>(null);
+export function useMultiAccountUsage() {
+  const [state, setState] = useState<MultiAccountUsageState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
   const isVisible = useDocumentVisibility();
-  const isInFlightRef = useRef(false);
+  const inFlightRef = useRef(false);
   const queuedManualRefreshRef = useRef(false);
   const latestRequestIdRef = useRef(0);
   const appliedRequestIdRef = useRef(0);
   const skipVisibilityRefreshRef = useRef(true);
 
-  const loadSnapshot = useEffectEvent(async (mode: RefreshMode) => {
-    if (isInFlightRef.current) {
+  const refresh = useEffectEvent(async (mode: RefreshMode) => {
+    if (inFlightRef.current) {
       if (mode === "manual") {
         queuedManualRefreshRef.current = true;
         setIsRefreshing(true);
@@ -39,89 +37,68 @@ export function useCodexUsage() {
       return;
     }
 
-    isInFlightRef.current = true;
+    inFlightRef.current = true;
     const requestId = latestRequestIdRef.current + 1;
     latestRequestIdRef.current = requestId;
+    const showSpinner = mode !== "background";
+    const spinnerStartedAt = showSpinner ? performance.now() : null;
 
-    const isInitial = mode === "initial";
-    const shouldSpinRefresh = mode !== "background" || snapshot === null;
-    const spinnerStartedAt = shouldSpinRefresh ? performance.now() : null;
-
-    if (isInitial) {
+    if (mode === "initial") {
       setIsLoading(true);
     }
 
-    if (shouldSpinRefresh) {
+    if (showSpinner) {
       setIsRefreshing(true);
     }
 
     try {
-      const nextSnapshot = await getCodexUsageSnapshot();
-
+      const nextState = await getMultiAccountUsage();
       if (requestId >= appliedRequestIdRef.current) {
         appliedRequestIdRef.current = requestId;
         startTransition(() => {
-          setSnapshot(nextSnapshot);
+          setState(nextState);
           setError(null);
-          setNow(Date.now());
         });
       }
     } catch (nextError) {
-      const nextMessage = toErrorMessage(nextError);
       if (requestId >= appliedRequestIdRef.current) {
         appliedRequestIdRef.current = requestId;
-        setError(nextMessage);
-        if (shouldClearSnapshot(nextMessage)) {
-          setSnapshot(null);
-        }
+        setError(toErrorMessage(nextError));
       }
     } finally {
-      isInFlightRef.current = false;
+      inFlightRef.current = false;
       const shouldRunQueuedManual = queuedManualRefreshRef.current;
-
-      if (isInitial) {
+      if (mode === "initial") {
         setIsLoading(false);
       }
-
-      if (shouldSpinRefresh && !shouldRunQueuedManual) {
+      if (showSpinner && !shouldRunQueuedManual) {
         await waitForMinimumSpinner(spinnerStartedAt);
         setIsRefreshing(false);
       }
-
       if (shouldRunQueuedManual) {
         queuedManualRefreshRef.current = false;
-        void loadSnapshot("manual");
+        void refresh("manual");
       }
     }
   });
 
   useEffect(() => {
-    void loadSnapshot("initial");
-  }, [loadSnapshot]);
+    void refresh("initial");
+  }, [refresh]);
 
   useEffect(() => {
     if (!isVisible) {
       return;
     }
 
-    const pollTimer = window.setInterval(() => {
-      void loadSnapshot("background");
+    const timer = window.setInterval(() => {
+      void refresh("background");
     }, POLL_INTERVAL_MS);
 
     return () => {
-      window.clearInterval(pollTimer);
+      window.clearInterval(timer);
     };
-  }, [isVisible, loadSnapshot]);
-
-  useEffect(() => {
-    const clockTimer = window.setInterval(() => {
-      setNow(Date.now());
-    }, CLOCK_INTERVAL_MS);
-
-    return () => {
-      window.clearInterval(clockTimer);
-    };
-  }, []);
+  }, [isVisible, refresh]);
 
   useEffect(() => {
     if (skipVisibilityRefreshRef.current) {
@@ -130,23 +107,20 @@ export function useCodexUsage() {
     }
 
     if (isVisible) {
-      void loadSnapshot("background");
+      void refresh("background");
     }
-  }, [isVisible, loadSnapshot]);
+  }, [isVisible, refresh]);
 
-  const api = useMemo(
+  return useMemo(
     () => ({
-      snapshot,
+      state,
       error,
       isLoading,
       isRefreshing,
-      now,
-      refresh: () => loadSnapshot("manual"),
+      refresh: () => refresh("manual"),
     }),
-    [error, isLoading, isRefreshing, loadSnapshot, now, snapshot],
+    [error, isLoading, isRefreshing, refresh, state],
   );
-
-  return api;
 }
 
 function toErrorMessage(error: unknown) {
@@ -161,15 +135,5 @@ function toErrorMessage(error: unknown) {
     }
   }
 
-  return "Unable to load the current Codex usage snapshot.";
-}
-
-function shouldClearSnapshot(message: string) {
-  const normalized = message.toLowerCase();
-  return (
-    normalized.includes("auth file not found") ||
-    normalized.includes("does not contain oauth tokens") ||
-    normalized.includes("unsupported auth mode") ||
-    normalized.includes("remove stored authentication credentials")
-  );
+  return "Unable to load saved account usage.";
 }

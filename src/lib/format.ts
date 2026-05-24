@@ -272,6 +272,37 @@ export function formatEstimate(value: number | null) {
   return compactNumberFormatter.format(value);
 }
 
+export function formatBytes(value: number) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "0 B";
+  }
+
+  const units = ["B", "KB", "MB", "GB"];
+  let size = value;
+  let unitIndex = 0;
+
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+
+  const digits = size >= 100 || unitIndex === 0 ? 0 : 1;
+  return `${size.toFixed(digits)} ${units[unitIndex]}`;
+}
+
+export function formatOptionalTimestamp(value: number | null) {
+  if (!value) {
+    return "Unknown";
+  }
+
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(value * 1000);
+}
+
 function getSecondsRemaining(limit: LimitSnapshot, now: number) {
   if (typeof limit.resetAt === "number") {
     return Math.max(0, Math.round(limit.resetAt - now / 1000));

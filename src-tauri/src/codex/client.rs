@@ -14,10 +14,16 @@ const USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 const FIVE_HOURS_SECONDS: i64 = 5 * 60 * 60;
 const WEEK_SECONDS: i64 = 7 * 24 * 60 * 60;
 
-pub async fn fetch_snapshot(client: &Client, credentials: &StoredCredentials) -> AppResult<CodexUsageSnapshot> {
+pub async fn fetch_snapshot(
+    client: &Client,
+    credentials: &StoredCredentials,
+) -> AppResult<CodexUsageSnapshot> {
     let mut request = client
         .get(USAGE_URL)
-        .header("Authorization", format!("Bearer {}", credentials.access_token))
+        .header(
+            "Authorization",
+            format!("Bearer {}", credentials.access_token),
+        )
         .header("Accept", "application/json");
 
     if let Some(account_id) = credentials.account_id.as_deref() {
@@ -33,13 +39,19 @@ pub async fn fetch_snapshot(client: &Client, credentials: &StoredCredentials) ->
         }
         401 | 403 => Err(AppError::Unauthorized),
         status => {
-            let body = response.text().await.unwrap_or_else(|_| String::from("no response body"));
+            let body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| String::from("no response body"));
             Err(AppError::Api(format!("{status}: {body}")))
         }
     }
 }
 
-fn map_snapshot(response: UsageApiResponse, account_identity: AccountIdentity) -> CodexUsageSnapshot {
+fn map_snapshot(
+    response: UsageApiResponse,
+    account_identity: AccountIdentity,
+) -> CodexUsageSnapshot {
     let now = Utc::now().timestamp();
     let rate_limit = response.rate_limit.clone();
     let primary_window = rate_limit.primary_window.clone();

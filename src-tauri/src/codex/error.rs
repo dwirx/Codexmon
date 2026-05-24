@@ -26,7 +26,10 @@ impl fmt::Display for AppError {
                 path.display()
             ),
             Self::HomeDirectoryMissing => {
-                write!(f, "Unable to resolve the current home directory for Codex auth lookup.")
+                write!(
+                    f,
+                    "Unable to resolve the current home directory for Codex auth lookup."
+                )
             }
             Self::UnsupportedAuthMode(mode) => write!(
                 f,
@@ -34,15 +37,26 @@ impl fmt::Display for AppError {
             ),
             Self::InvalidAuthFile(message) => write!(f, "Invalid Codex auth file: {message}"),
             Self::MissingTokens => {
-                write!(f, "Codex auth.json is present but does not contain OAuth tokens.")
+                write!(
+                    f,
+                    "Codex auth.json is present but does not contain OAuth tokens."
+                )
             }
-            Self::AuthRefreshFailed(message) => write!(f, "Failed to refresh Codex OAuth token: {message}"),
+            Self::AuthRefreshFailed(message) => {
+                write!(f, "Failed to refresh Codex OAuth token: {message}")
+            }
             Self::Unauthorized => write!(
                 f,
                 "Codex usage request was rejected. Refresh the session by running `codex` again."
             ),
-            Self::Network(message) => write!(f, "Network error while talking to Codex usage API: {message}"),
-            Self::Api(message) => write!(f, "Codex usage API returned an unexpected response: {message}"),
+            Self::Network(message) => write!(
+                f,
+                "Network error while talking to Codex usage API: {message}"
+            ),
+            Self::Api(message) => write!(
+                f,
+                "Codex usage API returned an unexpected response: {message}"
+            ),
             Self::Io(message) => write!(f, "I/O error while reading Codex state: {message}"),
             Self::Serialization(message) => write!(f, "Failed to decode Codex response: {message}"),
         }

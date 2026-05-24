@@ -51,7 +51,7 @@ pub struct CodexUsageSnapshot {
     pub weekly_limit: LimitSnapshot,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountSnapshot {
     pub display_name: String,
@@ -61,6 +61,39 @@ pub struct AccountSnapshot {
     pub email_verified: bool,
     pub auth_time: Option<i64>,
     pub account_label: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountManagerState {
+    pub active_profile_id: Option<String>,
+    pub profiles: Vec<AccountProfile>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountProfile {
+    pub id: String,
+    pub updated_at: i64,
+    pub is_active: bool,
+    pub account: AccountSnapshot,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct MultiAccountUsageState {
+    pub fetched_at: i64,
+    pub items: Vec<MultiAccountUsageItem>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct MultiAccountUsageItem {
+    pub profile_id: String,
+    pub is_active: bool,
+    pub account: AccountSnapshot,
+    pub snapshot: Option<CodexUsageSnapshot>,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -84,4 +117,30 @@ pub struct LimitSnapshot {
     pub reset_after_seconds: Option<i64>,
     pub allowed: bool,
     pub limit_reached: bool,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageCacheState {
+    pub app_storage_path: String,
+    pub profiles_path: String,
+    pub auth_path: String,
+    pub current_auth_exists: bool,
+    pub active_session_detected: bool,
+    pub state_file_exists: bool,
+    pub stored_profiles: usize,
+    pub inactive_profiles: usize,
+    pub total_files: usize,
+    pub total_bytes: u64,
+    pub entries: Vec<StorageCacheEntry>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageCacheEntry {
+    pub name: String,
+    pub kind: String,
+    pub path: String,
+    pub size_bytes: u64,
+    pub updated_at: Option<i64>,
 }
